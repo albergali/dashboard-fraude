@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+body{
+    width:1300px;
+    margin:50px auto;
+}
+path {  stroke: #fff; }
+path:hover {  opacity:0.9; }
+rect:hover {  fill:blue; }
+.axis {  font: 10px sans-serif; }
+.legend tr{    border-bottom:1px solid grey; }
+.legend tr:first-child{    border-top:1px solid grey; }
+
+.axis path,
+.axis line {
+  fill: none;
+  stroke: #000;
+  shape-rendering: crispEdges;
+}
+
+.x.axis path {  display: none; }
+.legend{
+    margin-bottom:76px;
+    display:inline-block;
+    border-collapse: collapse;
+    border-spacing: 0px;
+}
+.legend td{
+    padding:4px 5px;
+    vertical-align:bottom;
+}
+.legendFreq, .legendPerc{
+    align:right;
+    width:50px;
+}
+
+</style>
+<body>
+<h1>Detección de fraude en encuestas por encuestador participante</h1>
+<h2>Técnicas de Inteligencia Artificial - Clustering K-Medias</h2>
+
+<div id='dashboard'>
+</div>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script>
+function dashboard(id, fData){
+    var barColor = 'steelblue';
+    function segColor(c){ return {fraude:"#FF0000",nofraude:"#008000"}[c]; }
+    
+    // Cómputo para cada encuestador
+    fData.forEach(function(d){d.total=d.freq.fraude+d.freq.nofraude;});
+    
+    // Función de control del histograma
+    function histoGram(fD){
+        var hG={},    hGDim = {t: 60, r: 0, b: 30, l: 0};
+        hGDim.w = 700 - hGDim.l - hGDim.r, 
+        hGDim.h = 600 - hGDim.t - hGDim.b;
+            
+        //Creación del SVG para el histograma
+        var hGsvg = d3.select(id).append("svg")
+            .attr("width", hGDim.w + hGDim.l + hGDim.r)
+            .attr("height", hGDim.h + hGDim.t + hGDim.b).append("g")
+            .attr("transform", "translate(" + hGDim.l + "," + hGDim.t + ")");
+
+        // Función x-axis mapping.
+        var x = d3.scale.ordinal().rangeRoundBands([0, hGDim.w], 0.1)
+                .domain(fD.map(function(d) { return d[0]; }));
+
+        // Adición del eje x-axis
+        hGsvg.append("g").attr("class", "x axis")
+            .attr("transform", "translate(0," + hGDim.h + ")")
+            .call(d3.svg.axis().scale(x).orient("bottom"));
+
+        // Función y-axis map.
+        var y = d3.scale.linear().range([hGDim.h, 0])
+                .domain([0, d3.max(fD, function(d) { return d[1]; })]);
+
+        // Creación de las barras del histograma a partir de las frecuencias
+        var bars = hGsvg.selectAll(".bar").data(fD).enter()
+                .append("g").attr("class", "bar");
+        
+        // Creación de los rectángulos
+        bars.append("rect")
+            .attr("x", function(d) { return x(d[0]); })
+            .attr("y", function(d) { return y(d[1]); })
+            .attr("width", x.rangeBand())
+            .attr("height", function(d) { return hGDim.h - y(d[1]); })
+            .attr('fill',barColor)
+            .on("mouseover",mouseover) 
+            .on("mouseout",mouseout);
+            
+        //Etiquetas de las frecuencias
+        bars.append("text").text(function(d){ return d3.format(",")(d[1])})
+            .attr("x", function(d) { return x(d[0])+x.rangeBand()/2; })
+            .attr("y", function(d) { return y(d[1])-5; })
+            .attr("text-anchor", "middle");
+        
+        function mouseover(d){  
+            // Filtrado para el encuestador seleccionado
+            var st = fData.filter(function(s){ return s.Encuestador == d[0];})[0],
+                nD = d3.keys(st.freq).map(function(s){ return {type:s, freq:st.freq[s]};});
+               
+            // update del gráfico de sectores y leyendas    
+            pC.update(nD);
+            leg.update(nD);
+        }
+        
+        function mouseout(d){    
+            // reset del gráfico de sectores y leyendas  
+            pC.update(tF);
+            leg.update(tF);
+        }
+        
+        // Función de actualización de las barras cuando se usa el gráfico de sectores.
+        hG.update = function(nD, color){
+            y.domain([0, d3.max(nD, function(d) { return d[1]; })]);
+            
+            // Adjuntar los datos a las barras
+            var bars = hGsvg.selectAll(".bar").data(nD);
+            
+            // Transición de la altura y color de las barras.
+            bars.select("rect").transition().duration(500)
+                .attr("y", function(d) {return y(d[1]); })
+                .attr("height", function(d) { return hGDim.h - y(d[1]); })
+                .attr("fill", color);
+
+            // Transición de las etiquetas de frencuencia de las barras
+            bars.select("text").transition().duration(500)
+                .text(function(d){ return d3.format(",")(d[1])})
+                .attr("y", function(d) {return y(d[1])-5; });            
+        }        
+        return hG;
+    }
+    
+    // Función para controlar el gráfico de sectores
+    function pieChart(pD){
+        var pC ={},    pieDim ={w:300, h: 300};
+        pieDim.r = Math.min(pieDim.w, pieDim.h) / 2;
+                
+        // Creación del SVG para el gráfico de sectores
+        var piesvg = d3.select(id).append("svg")
+            .attr("width", pieDim.w).attr("height", pieDim.h).append("g")
+            .attr("transform", "translate("+pieDim.w/2+","+pieDim.h/2+")");
+        
+        // Función para la creación de arcos y porciones.
+        var arc = d3.svg.arc().outerRadius(pieDim.r - 10).innerRadius(0);
+
+        // Función que calcula los ángulos de las porciones
+        var pie = d3.layout.pie().sort(null).value(function(d) { return d.freq; });
+
+        // Dibujo de las porciones
+        piesvg.selectAll("path").data(pie(pD)).enter().append("path").attr("d", arc)
+            .each(function(d) { this._current = d; })
+            .style("fill", function(d) { return segColor(d.data.type); })
+            .on("mouseover",mouseover).on("mouseout",mouseout);
+
+        // Actualización del gráfico de sectores utilizado por el histograma
+        pC.update = function(nD){
+            piesvg.selectAll("path").data(pie(nD)).transition().duration(500)
+                .attrTween("d", arcTween);
+        }        
+        function mouseover(d){
+            hG.update(fData.map(function(v){ 
+                return [v.Encuestador,v.freq[d.data.type]];}),segColor(d.data.type));
+        }
+        
+        function mouseout(d){
+            hG.update(fData.map(function(v){
+                return [v.Encuestador,v.total];}), barColor);
+        }
+        // Animación del gráfico de sectores
+        function arcTween(a) {
+            var i = d3.interpolate(this._current, a);
+            this._current = i(0);
+            return function(t) { return arc(i(t));    };
+        }    
+        return pC;
+    }
+    
+    // Manejo de la leyenda
+    function legend(lD){
+        var leg = {};
+            
+        var legend = d3.select(id).append("table").attr('class','legend');
+        
+        var tr = legend.append("tbody").selectAll("tr").data(lD).enter().append("tr");
+            
+        tr.append("td").append("svg").attr("width", '16').attr("height", '16').append("rect")
+            .attr("width", '16').attr("height", '16')
+			.attr("fill",function(d){ return segColor(d.type); });
+            
+        tr.append("td").text(function(d){ return d.type;});
+
+        tr.append("td").attr("class",'legendFreq')
+            .text(function(d){ return d3.format(",")(d.freq);});
+
+        tr.append("td").attr("class",'legendPerc')
+            .text(function(d){ return getLegend(d,lD);});
+
+        // Actualización de la leyenda
+        leg.update = function(nD){
+            var l = legend.select("tbody").selectAll("tr").data(nD);
+
+            // Actualización de las frecuencias
+            l.select(".legendFreq").text(function(d){ return d3.format(",")(d.freq);});
+
+            // Actualización de los porcentajes por columna
+            l.select(".legendPerc").text(function(d){ return getLegend(d,nD);});        
+        }
+        
+        function getLegend(d,aD){ // 
+            return d3.format("%")(d.freq/d3.sum(aD.map(function(v){ return v.freq; })));
+        }
+
+        return leg;
+    }
+    
+    // Cálculo de frecuencias totales por segmento para cada encuestador
+    var tF = ['fraude','no fraude'].map(function(d){ 
+        return {type:d, freq: d3.sum(fData.map(function(t){ return t.freq[d];}))}; 
+    });    
+    
+    
+    var sF = fData.map(function(d){return [d.Encuestador,d.total];});
+
+    var hG = histoGram(sF), // Creación del hisograma
+        pC = pieChart(tF), // Creación del gráfico de sectores
+        leg= legend(tF);  // Creación de la leyenda
+}
+</script>
+
+<script>
+var freqData=[
+{Encuestador:'A',freq:{fraude:16, nofraude:1}}
+,{Encuestador:'B',freq:{fraude:85, nofraude:1}}
+,{Encuestador:'C',freq:{fraude:1, nofraude:15}}
+,{Encuestador:'D',freq:{fraude:161, nofraude:0}}
+,{Encuestador:'E',freq:{fraude:5, nofraude:199}}
+,{Encuestador:'F',freq:{fraude:4, nofraude:174}}
+,{Encuestador:'G',freq:{fraude:2, nofraude:96}}
+,{Encuestador:'H',freq:{fraude:1, nofraude:159}}
+,{Encuestador:'I',freq:{fraude:2, nofraude:176}}
+,{Encuestador:'J',freq:{fraude:0, nofraude:138}}
+,{Encuestador:'K',freq:{fraude:180, nofraude:0}}
+,{Encuestador:'N',freq:{fraude:1, nofraude:59}}
+,{Encuestador:'O',freq:{fraude:1, nofraude:58}}
+,{Encuestador:'P',freq:{fraude:1, nofraude:79}}
+,{Encuestador:'Q',freq:{fraude:0, nofraude:58}}
+,{Encuestador:'R',freq:{fraude:1, nofraude:44}}
+,{Encuestador:'S',freq:{fraude:1, nofraude:93}}
+,{Encuestador:'T',freq:{fraude:0, nofraude:64}}
+,{Encuestador:'V',freq:{fraude:1, nofraude:172}}
+,{Encuestador:'W',freq:{fraude:0, nofraude:206}}
+];
+
+dashboard('#dashboard',freqData);
+</script>
+</body>
+<body>
+
+
+<div id='dashboard'>
+<h2>Técnicas de Inteligencia Artificial - Árbol de decisión J48</h2>
+
+</div>
+<script src="http://d3js.org/d3.v3.min.js"></script>
+<script>
+function dashboard(id, fData){
+    var barColor = 'steelblue';
+    function segColor(c){ return {fraude:"#FF0000",nofraude:"#008000"}[c]; }
+    
+    // Cómputo para cada encuestador
+    fData.forEach(function(d){d.total=d.freq.fraude+d.freq.nofraude;});
+    
+    // Función de control del histograma
+    function histoGram(fD){
+        var hG={},    hGDim = {t: 60, r: 0, b: 30, l: 0};
+        hGDim.w = 700 - hGDim.l - hGDim.r, 
+        hGDim.h = 600 - hGDim.t - hGDim.b;
+            
+        //Creación del SVG para el histograma
+        var hGsvg = d3.select(id).append("svg")
+            .attr("width", hGDim.w + hGDim.l + hGDim.r)
+            .attr("height", hGDim.h + hGDim.t + hGDim.b).append("g")
+            .attr("transform", "translate(" + hGDim.l + "," + hGDim.t + ")");
+
+        // Función x-axis mapping.
+        var x = d3.scale.ordinal().rangeRoundBands([0, hGDim.w], 0.1)
+                .domain(fD.map(function(d) { return d[0]; }));
+
+        // Adición del eje x-axis
+        hGsvg.append("g").attr("class", "x axis")
+            .attr("transform", "translate(0," + hGDim.h + ")")
+            .call(d3.svg.axis().scale(x).orient("bottom"));
+
+        // Función y-axis map.
+        var y = d3.scale.linear().range([hGDim.h, 0])
+                .domain([0, d3.max(fD, function(d) { return d[1]; })]);
+
+        // Creación de las barras del histograma a partir de las frecuencias
+        var bars = hGsvg.selectAll(".bar").data(fD).enter()
+                .append("g").attr("class", "bar");
+        
+        // Creación de los rectángulos
+        bars.append("rect")
+            .attr("x", function(d) { return x(d[0]); })
+            .attr("y", function(d) { return y(d[1]); })
+            .attr("width", x.rangeBand())
+            .attr("height", function(d) { return hGDim.h - y(d[1]); })
+            .attr('fill',barColor)
+            .on("mouseover",mouseover) 
+            .on("mouseout",mouseout);
+            
+        //Etiquetas de las frecuencias
+        bars.append("text").text(function(d){ return d3.format(",")(d[1])})
+            .attr("x", function(d) { return x(d[0])+x.rangeBand()/2; })
+            .attr("y", function(d) { return y(d[1])-5; })
+            .attr("text-anchor", "middle");
+        
+        function mouseover(d){  
+            // Filtrado para el encuestador seleccionado
+            var st = fData.filter(function(s){ return s.Encuestador == d[0];})[0],
+                nD = d3.keys(st.freq).map(function(s){ return {type:s, freq:st.freq[s]};});
+               
+            // update del gráfico de sectores y leyendas    
+            pC.update(nD);
+            leg.update(nD);
+        }
+        
+        function mouseout(d){    
+            // reset del gráfico de sectores y leyendas  
+            pC.update(tF);
+            leg.update(tF);
+        }
+        
+        // Función de actualización de las barras cuando se usa el gráfico de sectores.
+        hG.update = function(nD, color){
+            y.domain([0, d3.max(nD, function(d) { return d[1]; })]);
+            
+            // Adjuntar los datos a las barras
+            var bars = hGsvg.selectAll(".bar").data(nD);
+            
+            // Transición de la altura y color de las barras.
+            bars.select("rect").transition().duration(500)
+                .attr("y", function(d) {return y(d[1]); })
+                .attr("height", function(d) { return hGDim.h - y(d[1]); })
+                .attr("fill", color);
+
+            // Transición de las etiquetas de frencuencia de las barras
+            bars.select("text").transition().duration(500)
+                .text(function(d){ return d3.format(",")(d[1])})
+                .attr("y", function(d) {return y(d[1])-5; });            
+        }        
+        return hG;
+    }
+    
+    // Función para controlar el gráfico de sectores
+    function pieChart(pD){
+        var pC ={},    pieDim ={w:300, h: 300};
+        pieDim.r = Math.min(pieDim.w, pieDim.h) / 2;
+                
+        // Creación del SVG para el gráfico de sectores
+        var piesvg = d3.select(id).append("svg")
+            .attr("width", pieDim.w).attr("height", pieDim.h).append("g")
+            .attr("transform", "translate("+pieDim.w/2+","+pieDim.h/2+")");
+        
+        // Función para la creación de arcos y porciones.
+        var arc = d3.svg.arc().outerRadius(pieDim.r - 10).innerRadius(0);
+
+        // Función que calcula los ángulos de las porciones
+        var pie = d3.layout.pie().sort(null).value(function(d) { return d.freq; });
+
+        // Dibujo de las porciones
+        piesvg.selectAll("path").data(pie(pD)).enter().append("path").attr("d", arc)
+            .each(function(d) { this._current = d; })
+            .style("fill", function(d) { return segColor(d.data.type); })
+            .on("mouseover",mouseover).on("mouseout",mouseout);
+
+        // Actualización del gráfico de sectores utilizado por el histograma
+        pC.update = function(nD){
+            piesvg.selectAll("path").data(pie(nD)).transition().duration(500)
+                .attrTween("d", arcTween);
+        }        
+        function mouseover(d){
+            hG.update(fData.map(function(v){ 
+                return [v.Encuestador,v.freq[d.data.type]];}),segColor(d.data.type));
+        }
+        
+        function mouseout(d){
+            hG.update(fData.map(function(v){
+                return [v.Encuestador,v.total];}), barColor);
+        }
+        // Animación del gráfico de sectores
+        function arcTween(a) {
+            var i = d3.interpolate(this._current, a);
+            this._current = i(0);
+            return function(t) { return arc(i(t));    };
+        }    
+        return pC;
+    }
+    
+    // Manejo de la leyenda
+    function legend(lD){
+        var leg = {};
+            
+        var legend = d3.select(id).append("table").attr('class','legend');
+        
+        var tr = legend.append("tbody").selectAll("tr").data(lD).enter().append("tr");
+            
+        tr.append("td").append("svg").attr("width", '16').attr("height", '16').append("rect")
+            .attr("width", '16').attr("height", '16')
+			.attr("fill",function(d){ return segColor(d.type); });
+            
+        tr.append("td").text(function(d){ return d.type;});
+
+        tr.append("td").attr("class",'legendFreq')
+            .text(function(d){ return d3.format(",")(d.freq);});
+
+        tr.append("td").attr("class",'legendPerc')
+            .text(function(d){ return getLegend(d,lD);});
+
+        // Actualización de la leyenda
+        leg.update = function(nD){
+            var l = legend.select("tbody").selectAll("tr").data(nD);
+
+            // Actualización de las frecuencias
+            l.select(".legendFreq").text(function(d){ return d3.format(",")(d.freq);});
+
+            // Actualización de los porcentajes por columna
+            l.select(".legendPerc").text(function(d){ return getLegend(d,nD);});        
+        }
+        
+        function getLegend(d,aD){ // 
+            return d3.format("%")(d.freq/d3.sum(aD.map(function(v){ return v.freq; })));
+        }
+
+        return leg;
+    }
+    
+    // Cálculo de frecuencias totales por segmento para cada encuestador
+    var tF = ['fraude','no fraude'].map(function(d){ 
+        return {type:d, freq: d3.sum(fData.map(function(t){ return t.freq[d];}))}; 
+    });    
+    
+    
+    var sF = fData.map(function(d){return [d.Encuestador,d.total];});
+
+    var hG = histoGram(sF), // Creación del hisograma
+        pC = pieChart(tF), // Creación del gráfico de sectores
+        leg= legend(tF);  // Creación de la leyenda
+}
+</script>
+
+<script>
+var freqData=[
+{Encuestador:'A',freq:{fraude:0, nofraude:177}}
+,{Encuestador:'B',freq:{fraude:0, nofraude:86}}
+,{Encuestador:'C',freq:{fraude:161, nofraude:0}}
+,{Encuestador:'D',freq:{fraude:0, nofraude:247}}
+,{Encuestador:'E',freq:{fraude:0, nofraude:204}}
+,{Encuestador:'F',freq:{fraude:0, nofraude:178}}
+,{Encuestador:'G',freq:{fraude:0, nofraude:98}}
+,{Encuestador:'H',freq:{fraude:0, nofraude:160}}
+,{Encuestador:'I',freq:{fraude:0, nofraude:178}}
+,{Encuestador:'J',freq:{fraude:0, nofraude:138}}
+,{Encuestador:'K',freq:{fraude:179, nofraude:1}}
+,{Encuestador:'N',freq:{fraude:0, nofraude:60}}
+,{Encuestador:'O',freq:{fraude:0, nofraude:59}}
+,{Encuestador:'P',freq:{fraude:0, nofraude:80}}
+,{Encuestador:'Q',freq:{fraude:0, nofraude:58}}
+,{Encuestador:'R',freq:{fraude:0, nofraude:45}}
+,{Encuestador:'S',freq:{fraude:0, nofraude:94}}
+,{Encuestador:'T',freq:{fraude:0, nofraude:64}}
+,{Encuestador:'V',freq:{fraude:0, nofraude:173}}
+,{Encuestador:'W',freq:{fraude:0, nofraude:206}}
+];
+
+dashboard('#dashboard',freqData);
+</script>
+</body>
+</html>
